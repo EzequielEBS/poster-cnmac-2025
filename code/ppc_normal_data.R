@@ -8,7 +8,7 @@ library(gridExtra)
 
 load("samples_ppc/samples_priorpred_pp.RData")
 load("samples_ppc/samples_priorpred_npp.RData")
-load("samples_ppc/ess_eta.RData")
+load("samples_ppc/ess.RData")
 load("data/sim_lm_data.RData")
 
 # data(airquality)
@@ -122,8 +122,8 @@ name_a01 <- "eta = 1"
 name_a00 <- "eta = 0"
 
 mytable <- cbind(
-  Dist = c("p[eta^'*']", "p[eta^'**']", "pi", "p[1]", "p[0]"),  # remove "expression(...)" wrapper
-  ESS = c(round(ess_eta[[which.min(crps_list)]], 2),
+  Dist = c("CRPS", "Hyvarinen", "NPP", "Full borrowing", "No borrowing"),  # remove "expression(...)" wrapper
+  pESS = c(round(ess_eta[[which.min(crps_list)]], 2),
           round(ess_eta[[which.min(hyvarinen_list)]], 2),
           round(ess_npp, 2),
           round(ess_eta[[40]], 2),
@@ -143,18 +143,80 @@ tg <- tableGrob(
   )
 )
 
+res_hist          = hdbayes:::stack.data(formula = formula, data.list = list(hist_data))
+res_curr          = hdbayes:::stack.data(formula = formula, data.list = list(curr_data))
+y0            = res_hist$y
+X0            = res_hist$X
+y = res_curr$y
+X = res_curr$X
+n <- length(y)
+p <- ncol(X)
+alpha <- 2
+beta <- 1
+mu_beta <- rep(0, p)
+S_beta <- diag(p)
+inv_S_beta <- solve(S_beta)
+S_eta_crps <- inv_S_beta + best_a0_crps * t(X0) %*% X0
+S_eta_hyva <- inv_S_beta + best_a0_hyvarinen * t(X0) %*% X0
+S_eta1 <- inv_S_beta + t(X0) %*% X0
+S_eta0 <- inv_S_beta
+inv_S_eta_crps <- solve(S_eta_crps)
+inv_S_eta_hyva <- solve(S_eta_hyva)
+inv_S_eta1 <- solve(S_eta1)
+inv_S_eta0 <- S_beta
+mu_eta_crps <- inv_S_eta_crps %*% (inv_S_beta %*% mu_beta +
+                                     best_a0_crps * t(X0) %*% y0)
+mu_eta_hyva <- inv_S_eta_hyva %*% (inv_S_beta %*% mu_beta +
+                                     best_a0_hyvarinen * t(X0) %*% y0)
+mu_eta1 <- inv_S_eta1 %*% (inv_S_beta %*% mu_beta +
+                           t(X0) %*% y0)
+mu_eta0 <- inv_S_eta0 %*% (inv_S_beta %*% mu_beta)
+mu_crps <- X %*% mu_eta_crps
+mu_hyva <- X %*% mu_eta_hyva
+mu1 <- X %*% mu_eta1
+mu0 <- X %*% mu_eta0
+S_crps <- beta/alpha * (diag(1, n) + X %*% inv_S_eta_crps %*% t(X))
+S_hyva <- beta/alpha * (diag(1, n) + X %*% inv_S_eta_hyva %*% t(X))
+S1 <- beta/alpha * (diag(1, n) + X %*% inv_S_eta1 %*% t(X))
+S0 <- beta/alpha * (diag(1, n) + X %*% inv_S_eta0 %*% t(X))
 
 ggplot() +
-  geom_density(data = df_plot, aes(x = value, color = Method), linewidth = 1) +
+  geom_function(fun = function(x) {
+    dt((x - mu_crps[obs]) / sqrt(S_crps[obs,obs]), df = 2 * alpha) / sqrt(S_crps[obs,obs])
+  },
+  aes(color = "CRPS"),
+  linewidth = 1
+  ) +
+  geom_function(fun = function(x) {
+    dt((x - mu_hyva[obs]) / sqrt(S_hyva[obs,obs]), df = 2 * alpha) / sqrt(S_hyva[obs,obs])
+  },
+  aes(color = "Hyva"),
+  linewidth = 1
+  ) +
+  geom_function(fun = function(x) {
+    dt((x - mu1[obs]) / sqrt(S1[obs,obs]), df = 2 * alpha) / sqrt(S1[obs,obs])
+  },
+  aes(color = "eta = 1"),
+  linetype = 'dashed',
+  linewidth = 1.6
+  ) +
+  geom_function(fun = function(x) {
+    dt((x - mu0[obs]) / sqrt(S0[obs,obs]), df = 2 * alpha) / sqrt(S0[obs,obs])
+  },
+  aes(color = "eta = 0"),
+  linetype = 'dotted',
+  linewidth = 1.6
+  ) +
+  # geom_density(data = df_plot, aes(x = value, color = Method), linewidth = 1) +
   geom_vline(aes(xintercept = obs_val, color = 'Obs value'), linewidth = 0.5) +
   labs(x = expression(tilde(y)), y = '') +
   theme_bw() +
-  geom_density(data = data.frame(y = draws_priorpred_pp[[40]][,obs]), 
-               aes(x = y, color = "eta = 1"), linetype = 'dashed',
-               linewidth = 1.6) +
-  geom_density(data = data.frame(y = draws_priorpred_pp[[1]][,obs]), 
-               aes(x = y, color = "eta = 0"), linetype = 'dotted',
-               linewidth = 1.6) +
+  # geom_density(data = data.frame(y = draws_priorpred_pp[[40]][,obs]), 
+  #              aes(x = y, color = "eta = 1"), linetype = 'dashed',
+  #              linewidth = 1.6) +
+  # geom_density(data = data.frame(y = draws_priorpred_pp[[1]][,obs]), 
+  #              aes(x = y, color = "eta = 0"), linetype = 'dotted',
+  #              linewidth = 1.6) +
   geom_density(data = data.frame(y = draws_priorpred_npp[,obs]), 
                aes(x = y, color = "NPP"),
                linewidth = 1) +
@@ -177,13 +239,18 @@ ggplot() +
       "Obs value" = "black"
     ),
     labels = c(
-      "CRPS"    = expression(p[eta^"*"]),
-      "Hyva"    = expression(p[eta^"**"]),
-      "eta = 0" = expression(p[0]),
-      "eta = 1" = expression(p[1]),
-      "NPP" = expression(pi),
+      "CRPS"    = "CRPS",
+      "Hyva"    = "Hyvarinen",
+      "eta = 0" = "No \nborrowing",
+      "eta = 1" = "Full \nborrowing",
       "Obs value" = expression(tilde(y)[obs])
-    )
+    ),
+    breaks = c("CRPS",
+               "Hyva",
+               "NPP",
+               "eta = 1",
+               "eta = 0",
+               "Obs value")
   ) +
   # geom_label(
   #   data = ess_labels,
@@ -195,15 +262,15 @@ ggplot() +
   #   size = 4,
   #   parse = TRUE
   # ) +
-  annotation_custom(tg, xmin=-4.5, xmax = -3, ymin=0.27, ymax=0.5)+
-  xlim(c(obs_val-3,obs_val+3)) +
+  annotation_custom(tg, xmin=-5.5, xmax = -3.3, ymin=0.29, ymax=0.55)+
+  xlim(c(obs_val-4,obs_val+4)) +
   theme(text = element_text(size = 12),        # Base text size
         axis.title = element_text(size = 14),  # Axis titles
         axis.text = element_text(size = 12),   # Axis tick labels
         legend.title = element_text(size = 14),
         legend.text = element_text(size = 12),
         strip.text = element_text(size = 11),
-        legend.position = c(0.9, 0.7),
+        legend.position = c(0.9, 0.775),
         legend.background = element_rect(
           fill = "white",     # background color of the legend
           color = "black",    # border color
@@ -213,4 +280,7 @@ ggplot() +
         panel.background = element_rect(fill = "white", color = NA),
         plot.background = element_rect(fill = "white", color = NA))
 
-ggsave("figures/ppc_npp_lm.png", width = 8, height = 5)
+ggsave("figures/ppc_npp_lm.png", width = 8, height = 5, dpi = 320)
+ggsave("figures/ppc_npp_lm.pdf", width = 8, height = 5, dpi = 320, device = cairo_pdf)
+
+plot(a0_list, ess_eta, type = 'b', xlab = expression(a[0]), ylab = 'ESS')

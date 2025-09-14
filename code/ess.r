@@ -313,4 +313,4 @@ ess_npp <- ess_lm_normgamma_npp(M,
                      b1, 
                      c)
 
-save(ess_eta, ess_npp, file = "samples_ppc/ess_eta.RData")
+save(ess_eta, ess_npp, file = "samples_ppc/ess.RData")
